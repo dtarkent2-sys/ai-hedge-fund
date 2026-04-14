@@ -51,9 +51,11 @@ class LLMModel(BaseModel):
         """Check if the model supports JSON mode"""
         if self.is_deepseek() or self.is_gemini():
             return False
-        # Only certain Ollama models support JSON mode
+        # Modern Ollama (local and cloud) supports format:"json" on /api/chat
+        # for every frontier model — glm-5.1:cloud, gpt-oss, deepseek, qwen3,
+        # kimi, etc. The old whitelist of llama3+neural-chat predates this.
         if self.is_ollama():
-            return "llama3" in self.model_name or "neural-chat" in self.model_name
+            return True
         # OpenRouter models generally support JSON mode
         if self.provider == ModelProvider.OPENROUTER:
             return True
