@@ -51,9 +51,11 @@ class LLMModel(BaseModel):
         """Check if the model supports JSON mode"""
         if self.is_deepseek() or self.is_gemini():
             return False
-        # Only certain Ollama models support JSON mode
+        # Modern Ollama (local and cloud) supports format:"json" on /api/chat
+        # for every frontier model — glm-5.1:cloud, gpt-oss, deepseek, qwen3,
+        # kimi, etc. The old whitelist of llama3+neural-chat predates this.
         if self.is_ollama():
-            return "llama3" in self.model_name or "neural-chat" in self.model_name
+            return True
         # OpenRouter models generally support JSON mode
         if self.provider == ModelProvider.OPENROUTER:
             return True
@@ -170,13 +172,28 @@ def get_model(model_name: str, model_provider: ModelProvider, api_keys: dict = N
             raise ValueError("Google API key not found.  Please make sure GOOGLE_API_KEY is set in your .env file or provided via API keys.")
         return ChatGoogleGenerativeAI(model=model_name, api_key=api_key)
     elif model_provider == ModelProvider.OLLAMA:
-        # For Ollama, we use a base URL instead of an API key
-        # Check if OLLAMA_HOST is set (for Docker on macOS)
-        ollama_host = os.getenv("OLLAMA_HOST", "localhost")
-        base_url = os.getenv("OLLAMA_BASE_URL", f"http://{ollama_host}:11434")
+        # Default to Ollama Cloud (https://ollama.com) which speaks the exact
+        # same /api/chat protocol as a local Ollama server, just hosted and
+        # gated by a Bearer token. Override OLLAMA_BASE_URL to a localhost URL
+        # if you want to run against a local Ollama install instead.
+        base_url = os.getenv("OLLAMA_BASE_URL", "https://ollama.com").rstrip("/")
+        api_key = (api_keys or {}).get("OLLAMA_API_KEY") or os.getenv("OLLAMA_API_KEY")
+        client_kwargs: dict = {}
+        if api_key:
+            client_kwargs["headers"] = {"Authorization": f"Bearer {api_key}"}
+        elif "ollama.com" in base_url:
+            print(
+                "API Key Error: OLLAMA_API_KEY is required when OLLAMA_BASE_URL "
+                "points at Ollama Cloud (https://ollama.com)."
+            )
+            raise ValueError(
+                "OLLAMA_API_KEY not found. Set it in your .env file or provide "
+                "it via api_keys when using Ollama Cloud."
+            )
         return ChatOllama(
             model=model_name,
             base_url=base_url,
+            client_kwargs=client_kwargs,
         )
     elif model_provider == ModelProvider.OPENROUTER:
         api_key = (api_keys or {}).get("OPENROUTER_API_KEY") or os.getenv("OPENROUTER_API_KEY")

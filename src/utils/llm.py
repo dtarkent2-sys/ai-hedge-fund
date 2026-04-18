@@ -34,9 +34,11 @@ def call_llm(
     if state and agent_name:
         model_name, model_provider = get_agent_model_config(state, agent_name)
     else:
-        # Use system defaults when no state or agent_name is provided
-        model_name = "gpt-4.1"
-        model_provider = "OPENAI"
+        # Use system defaults when no state or agent_name is provided.
+        # Default to glm-5.1:cloud via Ollama Cloud — see fb7befd for the
+        # provider wiring.
+        model_name = "glm-5.1:cloud"
+        model_provider = "Ollama"
 
     # Extract API keys from state if available
     api_keys = None
@@ -136,9 +138,9 @@ def get_agent_model_config(state, agent_name):
         if model_name and model_provider:
             return model_name, model_provider.value if hasattr(model_provider, 'value') else str(model_provider)
     
-    # Fall back to global configuration (system defaults)
-    model_name = state.get("metadata", {}).get("model_name") or "gpt-4.1"
-    model_provider = state.get("metadata", {}).get("model_provider") or "OPENAI"
+    # Fall back to global configuration (system defaults — glm-5.1:cloud via Ollama Cloud)
+    model_name = state.get("metadata", {}).get("model_name") or "glm-5.1:cloud"
+    model_provider = state.get("metadata", {}).get("model_provider") or "Ollama"
     
     # Convert enum to string if necessary
     if hasattr(model_provider, 'value'):

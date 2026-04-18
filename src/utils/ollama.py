@@ -11,7 +11,10 @@ import os
 from . import docker
 
 # Constants
-DEFAULT_OLLAMA_SERVER_URL = "http://localhost:11434"
+# Default to Ollama Cloud — same /api/chat protocol as local Ollama, hosted
+# at https://ollama.com and gated by a Bearer token. Override OLLAMA_BASE_URL
+# to http://localhost:11434 if you want a local Ollama install instead.
+DEFAULT_OLLAMA_SERVER_URL = "https://ollama.com"
 
 
 def _get_ollama_base_url() -> str:
@@ -28,6 +31,24 @@ def _get_ollama_endpoint(path: str) -> str:
     if not path.startswith("/"):
         path = f"/{path}"
     return f"{base}{path}"
+
+
+def _get_ollama_headers() -> dict:
+    """Return the auth headers for Ollama API calls.
+
+    Ollama Cloud (https://ollama.com) requires an Authorization: Bearer token
+    on every request. Local Ollama servers don't need auth, so we only add
+    the header when OLLAMA_API_KEY is set.
+    """
+    api_key = os.environ.get("OLLAMA_API_KEY")
+    if api_key:
+        return {"Authorization": f"Bearer {api_key}"}
+    return {}
+
+
+def _is_cloud_base_url(url: str | None = None) -> bool:
+    """Whether the configured base URL points at Ollama Cloud."""
+    return "ollama.com" in (url or _get_ollama_base_url())
 
 
 OLLAMA_DOWNLOAD_URL = {"darwin": "https://ollama.com/download/darwin", "windows": "https://ollama.com/download/windows", "linux": "https://ollama.com/download/linux"}  # macOS  # Windows  # Linux
@@ -58,7 +79,7 @@ def is_ollama_server_running() -> bool:
     """Check if the Ollama server is running."""
     endpoint = _get_ollama_endpoint("/api/tags")
     try:
-        response = requests.get(endpoint, timeout=2)
+        response = requests.get(endpoint, headers=_get_ollama_headers(), timeout=5)
         return response.status_code == 200
     except requests.RequestException:
         return False
@@ -71,7 +92,7 @@ def get_locally_available_models() -> List[str]:
 
     try:
         endpoint = _get_ollama_endpoint("/api/tags")
-        response = requests.get(endpoint, timeout=5)
+        response = requests.get(endpoint, headers=_get_ollama_headers(), timeout=5)
         if response.status_code == 200:
             data = response.json()
             return [model["name"] for model in data["models"]] if "models" in data else []
@@ -313,7 +334,17 @@ def ensure_ollama_and_model(model_name: str) -> bool:
     ollama_url = _get_ollama_base_url()
     env_override = os.environ.get("OLLAMA_BASE_URL")
 
-    # If an explicit base URL is provided (including Docker defaults), use the remote workflow
+    # Ollama Cloud is always "running" — there's nothing to install or start
+    # locally. Trust the cloud host and let the actual API call surface any
+    # errors (auth, model-not-found, etc.) at the call site.
+    if _is_cloud_base_url(ollama_url):
+        if not os.environ.get("OLLAMA_API_KEY"):
+            print(f"{Fore.RED}OLLAMA_API_KEY is required when using Ollama Cloud "
+                  f"({ollama_url}).{Style.RESET_ALL}")
+            return False
+        return True
+
+    # If an explicit base URL is provided (Docker defaults), use the remote workflow
     if env_override or ollama_url.startswith("http://ollama:") or ollama_url.startswith("http://host.docker.internal:"):
         return docker.ensure_ollama_and_model(model_name, ollama_url)
 
