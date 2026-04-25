@@ -56,23 +56,33 @@ def news_sentiment_agent(state: AgentState, agent_id: str = "news_sentiment_agen
         news_signals = []
         sentiment_confidences = {}  # Store confidence scores for each article
         sentiments_classified_by_llm = 0
-        
+
+        # AV's NEWS_SENTIMENT endpoint pre-tags every article with a 5-bucket
+        # label (Bullish / Somewhat-Bullish / Neutral / Somewhat-Bearish /
+        # Bearish), which our adapter buckets into bullish/bearish/neutral on
+        # the `sentiment` field. So `news.sentiment` is rarely None and we
+        # don't need to LLM-classify in the common path. We still fall back
+        # to the LLM when sentiment is missing (other data sources).
+        def _to_signal(label: str | None) -> str:
+            s = (label or "").strip().lower()
+            if s in ("bearish", "negative", "somewhat-bearish"):
+                return "bearish"
+            if s in ("bullish", "positive", "somewhat-bullish"):
+                return "bullish"
+            return "neutral"
+
         if company_news:
             # Check the 10 most recent articles
             recent_articles = company_news[:10]
             articles_without_sentiment = [news for news in recent_articles if news.sentiment is None]
-            
+
             # Analyze only the 5 most recent articles without sentiment to reduce LLM calls
             if articles_without_sentiment:
-              # We only take the first 5 articles, but this is configurable
               num_articles_to_analyze = 5
               articles_to_analyze = articles_without_sentiment[:num_articles_to_analyze]
               progress.update_status(agent_id, ticker, f"Analyzing sentiment for {len(articles_to_analyze)} articles")
-              
+
               for idx, news in enumerate(articles_to_analyze):
-                # We analyze based on title, but can also pass in the entire article text,
-                # but this is more expensive and requires extracting the text from the article.
-                # Note: this is an opportunity for improvement!
                 progress.update_status(agent_id, ticker, f"Analyzing sentiment for article {idx + 1} of {len(articles_to_analyze)}")
                 prompt = (
                     f"Please analyze the sentiment of the following news headline "
@@ -92,9 +102,17 @@ def news_sentiment_agent(state: AgentState, agent_id: str = "news_sentiment_agen
                     sentiment_confidences[id(news)] = 0
                 sentiments_classified_by_llm += 1
 
-            # Aggregate sentiment across all articles
-            sentiment = pd.Series([n.sentiment for n in company_news]).dropna()
-            news_signals = np.where(sentiment == "negative","bearish", np.where(sentiment == "positive", "bullish", "neutral")).tolist()
+            # Aggregate sentiment across all articles. Use _to_signal so we
+            # accept both AV's vocabulary ("bullish"/"bearish") AND the LLM's
+            # output ("positive"/"negative"). For confidence-weighting we also
+            # surface AV's `sentiment_score` when present.
+            news_signals = [_to_signal(n.sentiment) for n in company_news if n.sentiment]
+            for n in company_news:
+                if id(n) not in sentiment_confidences:
+                    # Use AV's relevance × |score| as a confidence proxy when present
+                    score = abs(n.sentiment_score) if n.sentiment_score is not None else 0.0
+                    rel = n.relevance if n.relevance is not None else 0.0
+                    sentiment_confidences[id(n)] = max(0.0, min(100.0, score * rel * 100))
 
         progress.update_status(agent_id, ticker, "Aggregating signals")
 
