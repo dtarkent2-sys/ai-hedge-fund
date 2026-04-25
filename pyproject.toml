@@ -59,4 +59,7 @@ profile = "black"
 force_alphabetical_sort_within_sections = true
 
 [tool.poetry.scripts]
+aihedgefund = "src.main:main"
+aihedgefund-web = "src.web:main"
+aihedgefund-backtest = "src.backtesting.cli:main"
 backtester = "src.backtesting.cli:main"

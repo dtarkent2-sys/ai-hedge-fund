@@ -152,12 +152,10 @@ def analyze_growth_and_reinvestment(metrics: list, line_items: list) -> dict[str
     if len(metrics) < 2:
         return {"score": 0, "max_score": max_score, "details": "Insufficient history"}
 
-    # Revenue CAGR (oldest to latest)
+    # Revenue CAGR (oldest to latest) — guarded against negative ratios
+    from src.utils.safe_math import safe_cagr
     revs = [m.revenue for m in reversed(metrics) if hasattr(m, "revenue") and m.revenue]
-    if len(revs) >= 2 and revs[0] > 0:
-        cagr = (revs[-1] / revs[0]) ** (1 / (len(revs) - 1)) - 1
-    else:
-        cagr = None
+    cagr = safe_cagr(revs[-1], revs[0], len(revs) - 1) if len(revs) >= 2 else None
 
     score, details = 0, []
 
@@ -299,12 +297,12 @@ def calculate_intrinsic_value_dcf(metrics: list, line_items: list, risk_analysis
     if not fcff0 or not shares:
         return {"intrinsic_value": None, "details": ["Missing FCFF or share count"]}
 
-    # Growth assumptions
+    # Growth assumptions — clamped to [-0.10, 0.12]; safe_cagr returns None when
+    # ratio is non-positive so we fall back to a benign 4% default.
+    from src.utils.safe_math import safe_cagr
     revs = [m.revenue for m in reversed(metrics) if m.revenue]
-    if len(revs) >= 2 and revs[0] > 0:
-        base_growth = min((revs[-1] / revs[0]) ** (1 / (len(revs) - 1)) - 1, 0.12)
-    else:
-        base_growth = 0.04  # fallback
+    raw = safe_cagr(revs[-1], revs[0], len(revs) - 1) if len(revs) >= 2 else None
+    base_growth = max(-0.10, min(raw, 0.12)) if raw is not None else 0.04
 
     terminal_growth = 0.025
     years = 10

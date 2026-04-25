@@ -120,7 +120,11 @@ def valuation_analyst_agent(state: AgentState, agent_id: str = "valuation_analys
             revenue_growth=most_recent_metrics.revenue_growth
         )
         
-        dcf_val = dcf_results['expected_value']
+        # `expected_value` is None when DCF can't be computed (e.g. negative FCF);
+        # method_values filters out non-positive values from the weighted sum,
+        # so this maps to a 0 weight in the final composite — DCF simply doesn't
+        # vote, rather than voting "$0".
+        dcf_val = dcf_results.get('expected_value') or 0
 
         # Implied Equity Value
         ev_ebitda_val = calculate_ev_ebitda_value(financial_metrics)
@@ -192,13 +196,22 @@ def valuation_analyst_agent(state: AgentState, agent_id: str = "valuation_analys
         
         # Add overall DCF scenario summary if available
         if 'dcf_results' in locals():
-            reasoning["dcf_scenario_analysis"] = {
-                "bear_case": f"${dcf_results['downside']:,.2f}",
-                "base_case": f"${dcf_results['scenarios']['base']:,.2f}",  
-                "bull_case": f"${dcf_results['upside']:,.2f}",
-                "wacc_used": f"{wacc:.1%}",
-                "fcf_periods_analyzed": len(fcf_history)
-            }
+            if dcf_results.get('expected_value') is None:
+                reasoning["dcf_scenario_analysis"] = {
+                    "status": "not_applicable",
+                    "reason": dcf_results.get('not_applicable_reason', 'DCF not meaningful'),
+                    "wacc_used": f"{wacc:.1%}",
+                    "fcf_periods_analyzed": len(fcf_history),
+                    "current_fcf": f"${fcf_history[0]:,.2f}" if fcf_history else "n/a",
+                }
+            else:
+                reasoning["dcf_scenario_analysis"] = {
+                    "bear_case": f"${dcf_results['downside']:,.2f}",
+                    "base_case": f"${dcf_results['scenarios']['base']:,.2f}",
+                    "bull_case": f"${dcf_results['upside']:,.2f}",
+                    "wacc_used": f"{wacc:.1%}",
+                    "fcf_periods_analyzed": len(fcf_history),
+                }
 
         valuation_analysis[ticker] = {
             "signal": signal,
@@ -397,11 +410,16 @@ def calculate_enhanced_dcf_value(
     wacc: float,
     market_cap: float,
     revenue_growth: float | None = None
-) -> float:
-    """Enhanced DCF with multi-stage growth."""
-    
+) -> float | None:
+    """Enhanced DCF with multi-stage growth.
+
+    Returns None when DCF is genuinely not applicable (no FCF history or current
+    FCF non-positive — companies in cash-burn mode like Bitcoin miners or
+    early-stage growth). Callers must handle None — older code returned 0,
+    which got displayed as `$0.00` and looked like a successful valuation.
+    """
     if not fcf_history or fcf_history[0] <= 0:
-        return 0
+        return None
     
     # Analyze FCF trend and quality
     fcf_current = fcf_history[0]
@@ -469,7 +487,7 @@ def calculate_dcf_scenarios(
     for scenario, adjustments in scenarios.items():
         adjusted_revenue_growth = base_revenue_growth * adjustments['growth_adj']
         adjusted_wacc = wacc * adjustments['wacc_adj']
-        
+
         results[scenario] = calculate_enhanced_dcf_value(
             fcf_history=fcf_history,
             growth_metrics=growth_metrics,
@@ -477,18 +495,29 @@ def calculate_dcf_scenarios(
             market_cap=market_cap,
             revenue_growth=adjusted_revenue_growth
         )
-    
+
+    # If any scenario couldn't compute (negative FCF), don't fabricate $0 values.
+    if any(v is None for v in results.values()):
+        return {
+            'scenarios': results,
+            'expected_value': None,
+            'range': None,
+            'upside': None,
+            'downside': None,
+            'not_applicable_reason': 'Negative or missing free cash flow — DCF not meaningful for cash-burn companies.',
+        }
+
     # Probability-weighted average
     expected_value = (
-        results['bear'] * 0.2 + 
-        results['base'] * 0.6 + 
+        results['bear'] * 0.2 +
+        results['base'] * 0.6 +
         results['bull'] * 0.2
     )
-    
+
     return {
         'scenarios': results,
         'expected_value': expected_value,
         'range': results['bull'] - results['bear'],
         'upside': results['bull'],
-        'downside': results['bear']
+        'downside': results['bear'],
     }

@@ -63,8 +63,10 @@ class BaseHedgeFundRequest(BaseModel):
     graph_nodes: List[GraphNode]
     graph_edges: List[GraphEdge]
     agent_models: Optional[List[AgentModelConfig]] = None
-    model_name: Optional[str] = "gpt-4.1"
-    model_provider: Optional[ModelProvider] = ModelProvider.OPENAI
+    # Default flips to Ollama/gpt-oss:20b automatically when OLLAMA_API_KEY is set,
+    # so agents whose nodes don't carry an explicit model pick don't 401 on OpenAI.
+    model_name: Optional[str] = None
+    model_provider: Optional[ModelProvider] = None
     margin_requirement: float = 0.0
     portfolio_positions: Optional[List[PortfolioPosition]] = None
     api_keys: Optional[Dict[str, str]] = None
@@ -75,20 +77,25 @@ class BaseHedgeFundRequest(BaseModel):
 
     def get_agent_model_config(self, agent_id: str) -> tuple[str, ModelProvider]:
         """Get model configuration for a specific agent"""
+        from src.utils.llm import _system_default_model
+        default_name, default_provider = _system_default_model()
+        effective_name = self.model_name or default_name
+        effective_provider = self.model_provider or default_provider
+
         if self.agent_models:
             # Extract base agent key from unique node ID for matching
             base_agent_key = extract_base_agent_key(agent_id)
-            
+
             for config in self.agent_models:
                 # Check both unique node ID and base agent key for matches
                 config_base_key = extract_base_agent_key(config.agent_id)
                 if config.agent_id == agent_id or config_base_key == base_agent_key:
                     return (
-                        config.model_name or self.model_name,
-                        config.model_provider or self.model_provider
+                        config.model_name or effective_name,
+                        config.model_provider or effective_provider,
                     )
         # Fallback to global model settings
-        return self.model_name, self.model_provider
+        return effective_name, effective_provider
 
 
 class BacktestRequest(BaseHedgeFundRequest):

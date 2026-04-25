@@ -329,8 +329,27 @@ def download_model(model_name: str) -> bool:
         return False
 
 
+def _is_ollama_cloud(model_name: str) -> bool:
+    """Detect Ollama Cloud mode (API key set, or a *-cloud / *:cloud model, or ollama.com base url)."""
+    if os.environ.get("OLLAMA_API_KEY"):
+        return True
+    base = (os.environ.get("OLLAMA_BASE_URL") or "").lower()
+    if base.startswith("https://ollama.com") or base.startswith("https://api.ollama.com"):
+        return True
+    name = (model_name or "").lower()
+    return name.endswith("-cloud") or name.endswith(":cloud") or ":cloud-" in name
+
+
 def ensure_ollama_and_model(model_name: str) -> bool:
     """Ensure Ollama is installed, running, and the requested model is available."""
+    # Ollama Cloud — no local daemon, no pull, just an API key.
+    if _is_ollama_cloud(model_name):
+        if not os.environ.get("OLLAMA_API_KEY"):
+            print(f"{Fore.RED}OLLAMA_API_KEY is not set. Add it to your .env to use Ollama Cloud.{Style.RESET_ALL}")
+            return False
+        print(f"{Fore.GREEN}Using Ollama Cloud ({os.environ.get('OLLAMA_BASE_URL') or 'https://ollama.com'}) — skipping local install/pull.{Style.RESET_ALL}")
+        return True
+
     ollama_url = _get_ollama_base_url()
     env_override = os.environ.get("OLLAMA_BASE_URL")
 

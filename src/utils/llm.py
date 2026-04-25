@@ -1,10 +1,31 @@
 """Helper functions for LLM"""
 
 import json
+import os
+import sys
+import traceback
 from pydantic import BaseModel
 from src.llm.models import get_model, get_model_info
 from src.utils.progress import progress
 from src.graph.state import AgentState
+
+
+def _system_default_model() -> tuple[str, str]:
+    """Pick a sensible default when the caller gave us no model config.
+
+    If OLLAMA_API_KEY is set, point to Ollama Cloud so stray default-routed
+    agents (e.g. portfolio_manager when the frontend didn't wire a model for
+    every node) don't silently try to call OpenAI with a placeholder key.
+
+    Users can override via AIHF_DEFAULT_MODEL / AIHF_DEFAULT_PROVIDER.
+    """
+    name = os.environ.get("AIHF_DEFAULT_MODEL")
+    prov = os.environ.get("AIHF_DEFAULT_PROVIDER")
+    if name and prov:
+        return name, prov
+    if os.environ.get("OLLAMA_API_KEY"):
+        return "gpt-oss:20b", "Ollama"
+    return "gpt-4.1", "OpenAI"
 
 
 def call_llm(
@@ -35,10 +56,13 @@ def call_llm(
         model_name, model_provider = get_agent_model_config(state, agent_name)
     else:
         # Use system defaults when no state or agent_name is provided.
-        # Default to glm-5.1:cloud via Ollama Cloud — see fb7befd for the
-        # provider wiring.
-        model_name = "glm-5.1:cloud"
-        model_provider = "Ollama"
+        # _system_default_model() returns the right pair based on env:
+        # OLLAMA_API_KEY set → ("gpt-oss:20b", "Ollama"), else
+        # ("gpt-4.1", "OpenAI"). AIHF_DEFAULT_MODEL/AIHF_DEFAULT_PROVIDER
+        # override either path. (The earlier hard-coded "glm-5.1:cloud" /
+        # "Ollama" pair is now expressible via those env vars without a
+        # code change.)
+        model_name, model_provider = _system_default_model()
 
     # Extract API keys from state if available
     api_keys = None
@@ -58,6 +82,7 @@ def call_llm(
         )
 
     # Call the LLM with retries
+    last_error: Exception | None = None
     for attempt in range(max_retries):
         try:
             # Call the LLM
@@ -72,12 +97,28 @@ def call_llm(
                 return result
 
         except Exception as e:
+            last_error = e
             if agent_name:
                 progress.update_status(agent_name, None, f"Error - retry {attempt + 1}/{max_retries}")
 
             if attempt == max_retries - 1:
-                print(f"Error in LLM call after {max_retries} attempts: {e}")
-                # Use default_factory if provided, otherwise create a basic default
+                # Loud, fully-contextual failure so bad model/provider settings surface immediately
+                label = agent_name or "<unknown agent>"
+                banner = "!" * 72
+                print(
+                    f"\n{banner}\n"
+                    f"LLM call FAILED for agent={label}\n"
+                    f"  model    = {model_name}\n"
+                    f"  provider = {model_provider}\n"
+                    f"  attempts = {max_retries}\n"
+                    f"  error    = {type(e).__name__}: {e}\n"
+                    f"{banner}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                traceback.print_exc(file=sys.stderr)
+                # Still return a default so one flaky agent doesn't tank the whole run —
+                # but the failure is now impossible to miss in the output.
                 if default_factory:
                     return default_factory()
                 return create_default_response(pydantic_model)
@@ -109,17 +150,83 @@ def create_default_response(model_class: type[BaseModel]) -> BaseModel:
 
 
 def extract_json_from_response(content: str) -> dict | None:
-    """Extracts JSON from markdown-formatted response."""
+    """Recover a JSON object from an LLM response.
+
+    Tries, in order:
+      1) Whole-string parse (when the model returned pure JSON).
+      2) ```json … ``` fenced block.
+      3) ``` … ``` generic fenced block.
+      4) First balanced {...} span in the text.
+    Returns None if nothing parses.
+    """
+    if not isinstance(content, str):
+        return None
+    text = content.strip()
+    if not text:
+        return None
+
+    # 1) whole string
     try:
-        json_start = content.find("```json")
-        if json_start != -1:
-            json_text = content[json_start + 7 :]  # Skip past ```json
-            json_end = json_text.find("```")
-            if json_end != -1:
-                json_text = json_text[:json_end].strip()
-                return json.loads(json_text)
-    except Exception as e:
-        print(f"Error extracting JSON from response: {e}")
+        obj = json.loads(text)
+        if isinstance(obj, dict):
+            return obj
+    except Exception:
+        pass
+
+    # 2) ```json fence
+    if "```json" in text:
+        try:
+            body = text.split("```json", 1)[1].split("```", 1)[0].strip()
+            obj = json.loads(body)
+            if isinstance(obj, dict):
+                return obj
+        except Exception:
+            pass
+
+    # 3) generic ``` fence
+    if "```" in text:
+        try:
+            body = text.split("```", 1)[1].split("```", 1)[0].strip()
+            # strip an optional leading language tag like "json\n"
+            if "\n" in body and body.split("\n", 1)[0].isalpha():
+                body = body.split("\n", 1)[1]
+            obj = json.loads(body)
+            if isinstance(obj, dict):
+                return obj
+        except Exception:
+            pass
+
+    # 4) first balanced-brace span
+    start = text.find("{")
+    while start != -1:
+        depth = 0
+        in_str = False
+        esc = False
+        for i in range(start, len(text)):
+            c = text[i]
+            if in_str:
+                if esc:
+                    esc = False
+                elif c == "\\":
+                    esc = True
+                elif c == '"':
+                    in_str = False
+            else:
+                if c == '"':
+                    in_str = True
+                elif c == "{":
+                    depth += 1
+                elif c == "}":
+                    depth -= 1
+                    if depth == 0:
+                        try:
+                            obj = json.loads(text[start:i + 1])
+                            if isinstance(obj, dict):
+                                return obj
+                        except Exception:
+                            break
+        start = text.find("{", start + 1)
+
     return None
 
 
@@ -138,9 +245,10 @@ def get_agent_model_config(state, agent_name):
         if model_name and model_provider:
             return model_name, model_provider.value if hasattr(model_provider, 'value') else str(model_provider)
     
-    # Fall back to global configuration (system defaults — glm-5.1:cloud via Ollama Cloud)
-    model_name = state.get("metadata", {}).get("model_name") or "glm-5.1:cloud"
-    model_provider = state.get("metadata", {}).get("model_provider") or "Ollama"
+    # Fall back to global configuration (system defaults).
+    default_name, default_provider = _system_default_model()
+    model_name = state.get("metadata", {}).get("model_name") or default_name
+    model_provider = state.get("metadata", {}).get("model_provider") or default_provider
     
     # Convert enum to string if necessary
     if hasattr(model_provider, 'value'):

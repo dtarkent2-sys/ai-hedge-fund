@@ -17,7 +17,12 @@ class AgentProgress:
         self.table = Table(show_header=False, box=None, padding=(0, 1))
         self.live = Live(self.table, console=console, refresh_per_second=4)
         self.started = False
+        self.quiet = False  # when True, skip the Rich Live display (used by the webview)
         self.update_handlers: List[Callable[[str, Optional[str], str], None]] = []
+
+    def set_quiet(self, quiet: bool = True):
+        """Disable the Rich Live display — handler callbacks still fire."""
+        self.quiet = quiet
 
     def register_handler(self, handler: Callable[[str, Optional[str], str], None]):
         """Register a handler to be called when agent status updates."""
@@ -31,14 +36,25 @@ class AgentProgress:
 
     def start(self):
         """Start the progress display."""
+        if self.quiet:
+            return
         if not self.started:
-            self.live.start()
-            self.started = True
+            try:
+                self.live.start()
+                self.started = True
+            except Exception:
+                self.quiet = True
+                self.started = False
 
     def stop(self):
         """Stop the progress display."""
         if self.started:
-            self.live.stop()
+            try:
+                self.live.stop()
+            except Exception:
+                # Encoding glitch on a final flush (Windows cp1252 can't render
+                # ✓/✗/⋯). Don't let it propagate out of run_hedge_fund.
+                pass
             self.started = False
 
     def update_status(self, agent_name: str, ticker: Optional[str] = None, status: str = "", analysis: Optional[str] = None):
@@ -61,7 +77,18 @@ class AgentProgress:
         for handler in self.update_handlers:
             handler(agent_name, ticker, status, analysis, timestamp)
 
-        self._refresh_display()
+        if not self.quiet and self.started:
+            try:
+                self._refresh_display()
+            except Exception:
+                # Never let a rendering glitch take down the workflow (e.g. Windows
+                # cp1252 can't encode ✓/✗/⋯). Fall back to silent mode permanently.
+                self.quiet = True
+                try:
+                    self.live.stop()
+                except Exception:
+                    pass
+                self.started = False
 
     def get_all_status(self):
         """Get the current status of all agents as a dictionary."""

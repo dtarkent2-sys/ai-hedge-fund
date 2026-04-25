@@ -123,28 +123,45 @@ class OllamaService:
     
     async def get_available_models(self) -> List[Dict[str, str]]:
         """Get available Ollama models formatted for the language models API.
-        
-        Returns only models that are:
-        1. Server is running
-        2. Model is downloaded locally  
-        3. Model is in our recommended list (OLLAMA_MODELS)
+
+        If OLLAMA_API_KEY is set, we're pointed at Ollama Cloud — every entry in
+        OLLAMA_MODELS is offered regardless of whether a local daemon is running.
+
+        Otherwise the legacy behavior applies: require a running local server and
+        only surface models that are downloaded locally AND in OLLAMA_MODELS.
         """
         try:
+            import os
+            from src.llm.models import OLLAMA_MODELS
+
+            if os.environ.get("OLLAMA_API_KEY"):
+                cloud_models = [
+                    {
+                        "display_name": m.display_name,
+                        "model_name": m.model_name,
+                        "provider": "Ollama",
+                    }
+                    for m in OLLAMA_MODELS
+                    if m.model_name != "-"
+                ]
+                logger.debug(f"Ollama Cloud mode: offering {len(cloud_models)} models")
+                return cloud_models
+
             status = await self.check_ollama_status()
-            
+
             if not status.get("server_running", False):
                 logger.debug("Ollama server not running, returning no models for API")
                 return []
-            
+
             downloaded_models = status.get("available_models", [])
             if not downloaded_models:
                 logger.debug("No Ollama models downloaded, returning empty list for API")
                 return []
-            
+
             api_models = self._format_models_for_api(downloaded_models)
             logger.debug(f"Returning {len(api_models)} Ollama models for language models API")
             return api_models
-            
+
         except Exception as e:
             logger.error(f"Error getting available models for API: {e}")
             return []  # Return empty list on error to not break the API
@@ -222,7 +239,7 @@ class OllamaService:
         try:
             response = await self._async_client.list()
             models = [model.model for model in response.models]
-            server_url = getattr(self._async_client, 'host', 'http://localhost:11434')
+            server_url = getattr(self._async_client, 'host', 'http://ollama.com')
             logger.debug(f"Found {len(models)} locally available models")
             return models, server_url
         except Exception as e:

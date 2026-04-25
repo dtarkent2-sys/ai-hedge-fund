@@ -1,12 +1,35 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 import logging
 import asyncio
+import os
+import sys
+from pathlib import Path
+
+# Force UTF-8 stdio so Rich's ✓/✗/⋯ glyphs and any unicode prints from agents
+# can never trigger a cp1252 UnicodeEncodeError under uvicorn on Windows.
+os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
+# Load .env from the repo root so OLLAMA_API_KEY / FINANCIAL_DATASETS_API_KEY /
+# etc. are visible to the backend even when uvicorn is launched from app/backend.
+from dotenv import load_dotenv
+_repo_root = Path(__file__).resolve().parents[2]
+load_dotenv(_repo_root / ".env", override=False)
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.backend.routes import api_router
 from app.backend.database.connection import engine
 from app.backend.database.models import Base
 from app.backend.services.ollama_service import ollama_service
+from src.utils.progress import progress
+# Suppress Rich Live display in the backend process — TTY widget is fragile
+# under uvicorn on Windows and the frontend has its own progress stream.
+progress.set_quiet(True)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

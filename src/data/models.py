@@ -59,6 +59,23 @@ class FinancialMetrics(BaseModel):
     earnings_per_share: float | None
     book_value_per_share: float | None
     free_cash_flow_per_share: float | None
+    # Raw totals that several agents pull off FinancialMetrics directly
+    # (e.g. Damodaran's DCF reads `m.free_cash_flow` as base FCFF; his risk
+    # analyzer reads `m.beta`, `m.ebit`, `m.interest_expense`).
+    free_cash_flow: float | None = None
+    outstanding_shares: float | None = None
+    revenue: float | None = None
+    net_income: float | None = None
+    total_debt: float | None = None
+    ebit: float | None = None
+    interest_expense: float | None = None
+    ebitda: float | None = None
+    beta: float | None = None
+    # Real per-share dividend metrics — sourced from AV's DIVIDENDS endpoint
+    # rather than estimated as `payout_ratio * (1 / PE)`.
+    dividend_yield: float | None = None
+    trailing_dividends_per_share: float | None = None
+    dividend_growth_5y: float | None = None
 
 
 class FinancialMetricsResponse(BaseModel):
@@ -106,7 +123,13 @@ class CompanyNews(BaseModel):
     source: str
     date: str
     url: str
-    sentiment: str | None = None
+    sentiment: str | None = None  # bullish / bearish / neutral (3-bucket, our scheme)
+    # Richer sentiment data when sourced from AV's NEWS_SENTIMENT endpoint.
+    sentiment_label: str | None = None  # AV's 5-bucket label (Bullish / Somewhat-Bullish / Neutral / …)
+    sentiment_score: float | None = None  # ticker-specific score (-1..+1)
+    relevance: float | None = None  # how relevant this article is to the ticker
+    summary: str | None = None
+    topics: list[dict] | None = None  # [{topic: str, relevance_score: str}, …]
 
 
 class CompanyNewsResponse(BaseModel):

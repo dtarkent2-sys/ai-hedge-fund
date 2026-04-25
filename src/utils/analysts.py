@@ -20,8 +20,38 @@ from src.agents.mohnish_pabrai import mohnish_pabrai_agent
 from src.agents.nassim_taleb import nassim_taleb_agent
 from src.agents.news_sentiment import news_sentiment_agent
 from src.agents.growth_agent import growth_analyst_agent
+from src.agents.deterministic import (
+    piotroski_agent,
+    greenblatt_agent,
+    momentum_agent,
+    low_volatility_agent,
+    acquirers_multiple_agent,
+    multi_factor_agent,
+    earnings_revision_agent,
+    mohanram_agent,
+    dividend_aristocrat_agent,
+    etf_profile_agent,
+    dashan_huang_agent,
+)
+from src.agents.personas import (
+    kenneth_fisher_agent,
+    oshaughnessy_agent,
+    martin_zweig_agent,
+    joel_greenblatt_agent,
+    john_neff_agent,
+    david_dreman_agent,
+    motley_fool_agent,
+    wesley_gray_agent,
+    meb_faber_agent,
+)
 
-# Define analyst configuration - single source of truth
+# Define analyst configuration - single source of truth.
+#
+# Each entry's `kind` field declares whether the agent is a heuristic LLM
+# persona ("heuristic") or a pure-math factor agent ("deterministic"). The
+# field is used both for workflow construction and for the dashboard's
+# split-view rendering. Existing personas default to "heuristic" via the
+# fallback in get_agents_list / the frontend.
 ANALYST_CONFIG = {
     "aswath_damodaran": {
         "display_name": "Aswath Damodaran",
@@ -175,6 +205,190 @@ ANALYST_CONFIG = {
         "type": "analyst",
         "order": 18,
     },
+    # ─── Deterministic factor agents ────────────────────────────────────────────
+    # Pure math, no LLM call. Each translates published rules from finance
+    # research into a fixed signal/confidence based on thresholds.
+    "piotroski": {
+        "display_name": "Piotroski F-Score",
+        "description": "Quality filter (9-point financial-strength score)",
+        "investing_style": "Pure-math quality screen on profitability, leverage, and operating efficiency. Bullish at F ≥ 7, bearish at F ≤ 3.",
+        "agent_func": piotroski_agent,
+        "type": "analyst",
+        "kind": "deterministic",
+        "order": 100,
+    },
+    "greenblatt": {
+        "display_name": "Greenblatt (Magic Formula)",
+        "description": "Earnings yield × ROIC composite",
+        "investing_style": "Two-factor deep-value/quality from 'The Little Book That Beats the Market': EBIT/EV and EBIT/Invested-Capital.",
+        "agent_func": greenblatt_agent,
+        "type": "analyst",
+        "kind": "deterministic",
+        "order": 101,
+    },
+    "acquirers_multiple": {
+        "display_name": "Carlisle (Acquirer's Multiple)",
+        "description": "Single-factor EV/EBIT deep value",
+        "investing_style": "Tobias Carlisle's deep-value test. Sub-8 EV/EBIT bullish, > 15 bearish.",
+        "agent_func": acquirers_multiple_agent,
+        "type": "analyst",
+        "kind": "deterministic",
+        "order": 102,
+    },
+    "momentum": {
+        "display_name": "Momentum (12-1)",
+        "description": "Price strength factor",
+        "investing_style": "Standard academic 12-month return excluding the most recent month. Positive trend → bullish.",
+        "agent_func": momentum_agent,
+        "type": "analyst",
+        "kind": "deterministic",
+        "order": 103,
+    },
+    "low_volatility": {
+        "display_name": "Low Volatility",
+        "description": "Defensive low-vol factor (van Vliet)",
+        "investing_style": "Annualized realized volatility of trailing 60d, blended with a Sharpe-like reading. Low vol + non-negative return → bullish.",
+        "agent_func": low_volatility_agent,
+        "type": "analyst",
+        "kind": "deterministic",
+        "order": 104,
+    },
+    "multi_factor": {
+        "display_name": "Multi-Factor Composite",
+        "description": "Weighted value/quality/momentum/low-vol",
+        "investing_style": "Composite that ranks the stock on four classical factors and weights them 30/30/20/20.",
+        "agent_func": multi_factor_agent,
+        "type": "analyst",
+        "kind": "deterministic",
+        "order": 105,
+    },
+    "earnings_revision": {
+        "display_name": "Earnings Revision",
+        "description": "Surprise history + estimate trend",
+        "investing_style": "Composite of last-4-quarter beats/misses, average surprise %, and 8-quarter slope of analyst estimate-EPS.",
+        "agent_func": earnings_revision_agent,
+        "type": "analyst",
+        "kind": "deterministic",
+        "order": 106,
+    },
+    "mohanram": {
+        "display_name": "Mohanram G-Score",
+        "description": "Growth-stock 7-point quality screen",
+        "investing_style": "Mohanram (2005) G-Score. Profitability, accruals quality, earnings/sales stability, R&D and CapEx intensity.",
+        "agent_func": mohanram_agent,
+        "type": "analyst",
+        "kind": "deterministic",
+        "order": 107,
+    },
+    "dividend_aristocrat": {
+        "display_name": "Dividend Aristocrat",
+        "description": "TTM yield + 5-yr CAGR + streak",
+        "investing_style": "Real split-adjusted per-share dividend history from AV: bullish on multi-year non-decreasing payers with positive 5-yr CAGR; bearish on cuts or non-payers.",
+        "agent_func": dividend_aristocrat_agent,
+        "type": "analyst",
+        "kind": "deterministic",
+        "order": 108,
+    },
+    "etf_profile": {
+        "display_name": "ETF Profile",
+        "description": "ETF size, cost, sector concentration",
+        "investing_style": "ETF-only structural analysis: net assets, expense ratio, turnover, sector & holding concentration, leveraged flag. Returns low-confidence neutral on non-ETF tickers.",
+        "agent_func": etf_profile_agent,
+        "type": "analyst",
+        "kind": "deterministic",
+        "order": 109,
+    },
+    "dashan_huang": {
+        "display_name": "Dashan Huang (Twin Momentum)",
+        "description": "Fundamental momentum + 12-1 price momentum",
+        "investing_style": "Huang-Zhang-Zhong (2018): combines a 7-variable fundamental composite (earnings, ROE, ROA, AOP/E, COP/A, GP/A, net payout) with classical 12-1 price momentum. Both positive → strong bullish; both negative → strong bearish.",
+        "agent_func": dashan_huang_agent,
+        "type": "analyst",
+        "kind": "deterministic",
+        "order": 110,
+    },
+    # ─── Heuristic LLM personas (Validea-style) ─────────────────────────────────
+    "kenneth_fisher": {
+        "display_name": "Kenneth Fisher",
+        "description": "Super Stocks / P/S focus",
+        "investing_style": "Ken Fisher's Super Stocks framework: low P/S, sales growth, FCF positive, modest debt.",
+        "agent_func": kenneth_fisher_agent,
+        "type": "analyst",
+        "kind": "heuristic",
+        "order": 200,
+    },
+    "oshaughnessy": {
+        "display_name": "James O'Shaughnessy",
+        "description": "Trending Value composite",
+        "investing_style": "Six-factor value composite (PE, PB, PS, PCF, EV/EBITDA, shareholder yield) filtered by 6-month price strength.",
+        "agent_func": oshaughnessy_agent,
+        "type": "analyst",
+        "kind": "heuristic",
+        "order": 201,
+    },
+    "martin_zweig": {
+        "display_name": "Martin Zweig",
+        "description": "Growth + earnings persistence + reasonable PE",
+        "investing_style": "Zweig's checklist: 4+ years rising EPS, sales tracks earnings, accelerating growth, P/E ≤ market×1.4, modest debt.",
+        "agent_func": martin_zweig_agent,
+        "type": "analyst",
+        "kind": "heuristic",
+        "order": 202,
+    },
+    "joel_greenblatt_persona": {
+        "display_name": "Joel Greenblatt (persona)",
+        "description": "Magic Formula in narrative voice",
+        "investing_style": "Earnings yield (EBIT/EV) × Return on Capital. Cheap + good = buy.",
+        "agent_func": joel_greenblatt_agent,
+        "type": "analyst",
+        "kind": "heuristic",
+        "order": 203,
+    },
+    "john_neff": {
+        "display_name": "John Neff",
+        "description": "Total Return Ratio (low-PE contrarian)",
+        "investing_style": "TRR = (earnings growth + dividend yield) / P/E. ≥ 2× market reward = bullish.",
+        "agent_func": john_neff_agent,
+        "type": "analyst",
+        "kind": "heuristic",
+        "order": 204,
+    },
+    "david_dreman": {
+        "display_name": "David Dreman",
+        "description": "Deep contrarian value (cheapest 20%)",
+        "investing_style": "Bottom-quintile P/E + P/B + P/CF, above-average dividend yield, basic quality screen.",
+        "agent_func": david_dreman_agent,
+        "type": "analyst",
+        "kind": "heuristic",
+        "order": 205,
+    },
+    "motley_fool": {
+        "display_name": "Motley Fool",
+        "description": "Foolish Small Cap growth",
+        "investing_style": "Sub-$3B small-caps with 25%+ revenue/earnings growth and healthy margins.",
+        "agent_func": motley_fool_agent,
+        "type": "analyst",
+        "kind": "heuristic",
+        "order": 206,
+    },
+    "wesley_gray": {
+        "display_name": "Wesley Gray",
+        "description": "Quantitative Value (deep value + quality)",
+        "investing_style": "Cheapest decile by EV/EBIT with stable positive operating margins and manageable debt.",
+        "agent_func": wesley_gray_agent,
+        "type": "analyst",
+        "kind": "heuristic",
+        "order": 207,
+    },
+    "meb_faber": {
+        "display_name": "Meb Faber",
+        "description": "Shareholder Yield + trend filter",
+        "investing_style": "Dividend + buyback + debt-paydown yield. Bullish only when also above 200-day MA.",
+        "agent_func": meb_faber_agent,
+        "type": "analyst",
+        "kind": "heuristic",
+        "order": 208,
+    },
 }
 
 # Derive ANALYST_ORDER from ANALYST_CONFIG for backwards compatibility
@@ -194,7 +408,8 @@ def get_agents_list():
             "display_name": config["display_name"],
             "description": config["description"],
             "investing_style": config["investing_style"],
-            "order": config["order"]
+            "order": config["order"],
+            "kind": config.get("kind", "heuristic"),
         }
         for key, config in sorted(ANALYST_CONFIG.items(), key=lambda x: x[1]["order"])
     ]

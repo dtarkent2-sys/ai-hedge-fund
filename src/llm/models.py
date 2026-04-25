@@ -78,6 +78,13 @@ class LLMModel(BaseModel):
         """Check if the model is an Ollama model"""
         return self.provider == ModelProvider.OLLAMA
 
+    def is_ollama_cloud(self) -> bool:
+        """Check if this Ollama model targets Ollama Cloud (named with a -cloud / :cloud suffix)"""
+        if not self.is_ollama():
+            return False
+        name = self.model_name.lower()
+        return name.endswith("-cloud") or name.endswith(":cloud") or ":cloud-" in name
+
 
 # Load models from JSON file
 def load_models_from_json(json_path: str) -> List[LLMModel]:
@@ -153,10 +160,24 @@ def get_model(model_name: str, model_provider: ModelProvider, api_keys: dict = N
         # Get and validate API key
         api_key = (api_keys or {}).get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
         base_url = os.getenv("OPENAI_API_BASE")
-        if not api_key:
-            # Print error to console
-            print(f"API Key Error: Please make sure OPENAI_API_KEY is set in your .env file or provided via API keys.")
-            raise ValueError("OpenAI API key not found.  Please make sure OPENAI_API_KEY is set in your .env file or provided via API keys.")
+        # If the OpenAI key is missing or still the placeholder, fall back to the
+        # system default (e.g. Ollama Cloud) so a stray default-routed agent can
+        # never kill a run with a 401.
+        placeholder_keys = {"", None, "your-openai-api-key", "sk-your-openai-api-key"}
+        if api_key in placeholder_keys or (isinstance(api_key, str) and api_key.startswith("your-")):
+            from src.utils.llm import _system_default_model
+            fallback_name, fallback_provider = _system_default_model()
+            if fallback_provider != "OpenAI":
+                print(
+                    f"[hedge-fund] OPENAI_API_KEY missing/placeholder — falling back from "
+                    f"{model_name}/OpenAI to {fallback_name}/{fallback_provider}.",
+                    flush=True,
+                )
+                return get_model(fallback_name, fallback_provider, api_keys)
+            raise ValueError(
+                "OpenAI API key not found. Please set OPENAI_API_KEY in your .env file "
+                "or pick an Ollama / cloud model in the frontend."
+            )
         return ChatOpenAI(model=model_name, api_key=api_key, base_url=base_url)
     elif model_provider == ModelProvider.ANTHROPIC:
         api_key = (api_keys or {}).get("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
@@ -177,29 +198,39 @@ def get_model(model_name: str, model_provider: ModelProvider, api_keys: dict = N
             raise ValueError("Google API key not found.  Please make sure GOOGLE_API_KEY is set in your .env file or provided via API keys.")
         return ChatGoogleGenerativeAI(model=model_name, api_key=api_key)
     elif model_provider == ModelProvider.OLLAMA:
-        # Default to Ollama Cloud (https://ollama.com) which speaks the exact
-        # same /api/chat protocol as a local Ollama server, just hosted and
-        # gated by a Bearer token. Override OLLAMA_BASE_URL to a localhost URL
-        # if you want to run against a local Ollama install instead.
-        base_url = os.getenv("OLLAMA_BASE_URL", "https://ollama.com").rstrip("/")
+        # Ollama routing — supports two modes:
+        #   1. Ollama Cloud (https://ollama.com) — default when OLLAMA_API_KEY
+        #      is set; required by any model with a -cloud / :cloud suffix.
+        #   2. Local daemon (http://localhost:11434) — used when no API key
+        #      and the user explicitly sets OLLAMA_BASE_URL to a localhost URL.
         api_key = (api_keys or {}).get("OLLAMA_API_KEY") or os.getenv("OLLAMA_API_KEY")
-        client_kwargs: dict = {}
-        if api_key:
-            client_kwargs["headers"] = {"Authorization": f"Bearer {api_key}"}
-        elif "ollama.com" in base_url:
-            print(
-                "API Key Error: OLLAMA_API_KEY is required when OLLAMA_BASE_URL "
-                "points at Ollama Cloud (https://ollama.com)."
-            )
-            raise ValueError(
-                "OLLAMA_API_KEY not found. Set it in your .env file or provide "
-                "it via api_keys when using Ollama Cloud."
-            )
-        return ChatOllama(
-            model=model_name,
-            base_url=base_url,
-            client_kwargs=client_kwargs,
+        name_lower = model_name.lower()
+        is_cloud_model = (
+            name_lower.endswith("-cloud")
+            or name_lower.endswith(":cloud")
+            or ":cloud-" in name_lower
         )
+        use_cloud = bool(api_key) or is_cloud_model
+
+        if use_cloud:
+            base_url = (os.getenv("OLLAMA_BASE_URL") or "https://ollama.com").rstrip("/")
+            if not api_key:
+                print(
+                    "API Key Error: OLLAMA_API_KEY is required for Ollama Cloud "
+                    "(model name has a -cloud / :cloud suffix or OLLAMA_BASE_URL "
+                    "points at ollama.com)."
+                )
+                raise ValueError("Ollama Cloud requires OLLAMA_API_KEY to be set.")
+            return ChatOllama(
+                model=model_name,
+                base_url=base_url,
+                client_kwargs={"headers": {"Authorization": f"Bearer {api_key}"}},
+            )
+
+        # Local daemon
+        ollama_host = os.getenv("OLLAMA_HOST", "localhost")
+        base_url = os.getenv("OLLAMA_BASE_URL", f"http://{ollama_host}:11434").rstrip("/")
+        return ChatOllama(model=model_name, base_url=base_url)
     elif model_provider == ModelProvider.OPENROUTER:
         api_key = (api_keys or {}).get("OPENROUTER_API_KEY") or os.getenv("OPENROUTER_API_KEY")
         if not api_key:

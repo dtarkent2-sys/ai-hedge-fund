@@ -1,4 +1,15 @@
+import os
 import sys
+
+# Force UTF-8 stdio so the Rich progress display's ✓/✗/⋯ glyphs and any
+# downstream unicode prints can never trigger a cp1252 UnicodeEncodeError on
+# Windows (e.g. when the CLI is invoked from a non-TTY shell).
+os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage
@@ -50,9 +61,22 @@ def run_hedge_fund(
     portfolio: dict,
     show_reasoning: bool = False,
     selected_analysts: list[str] = [],
-    model_name: str = "gpt-4.1",
-    model_provider: str = "OpenAI",
+    model_name: str | None = None,
+    model_provider: str | None = None,
 ):
+    from src.utils.llm import _system_default_model
+    if not model_name or not model_provider:
+        default_name, default_provider = _system_default_model()
+        model_name = model_name or default_name
+        model_provider = model_provider or default_provider
+
+    # Per-run reset: a transient AV throttle in a *previous* run shouldn't
+    # lock a ticker out of news fetches for this run.
+    try:
+        from src.tools.alphavantage import reset_news_negative_cache
+        reset_news_negative_cache()
+    except Exception:
+        pass
     # Start progress tracking
     progress.start()
 
@@ -130,7 +154,8 @@ def create_workflow(selected_analysts=None):
     return workflow
 
 
-if __name__ == "__main__":
+def main():
+    """Entrypoint for the `aihedgefund` console script."""
     inputs = parse_cli_inputs(
         description="Run the hedge fund trading system",
         require_tickers=True,
@@ -140,9 +165,7 @@ if __name__ == "__main__":
     )
 
     tickers = inputs.tickers
-    selected_analysts = inputs.selected_analysts
 
-    # Construct portfolio here
     portfolio = {
         "cash": inputs.initial_cash,
         "margin_requirement": inputs.margin_requirement,
@@ -177,3 +200,7 @@ if __name__ == "__main__":
         model_provider=inputs.model_provider,
     )
     print_trading_output(result)
+
+
+if __name__ == "__main__":
+    main()
