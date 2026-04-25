@@ -25,6 +25,11 @@
     "provider": "Ollama"
   },
   {
+    "display_name": "[cloud] DeepSeek V4 Flash",
+    "model_name": "deepseek-v4-flash:cloud",
+    "provider": "Ollama"
+  },
+  {
     "display_name": "[cloud] Qwen3 Coder 480B",
     "model_name": "qwen3-coder:480b",
     "provider": "Ollama"

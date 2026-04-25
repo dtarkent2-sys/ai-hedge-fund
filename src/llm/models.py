@@ -52,11 +52,11 @@ class LLMModel(BaseModel):
         """Check if the model supports JSON mode"""
         if self.is_deepseek() or self.is_gemini():
             return False
-        # Modern Ollama (local and cloud) supports format:"json" on /api/chat
-        # for every frontier model — glm-5.1:cloud, gpt-oss, deepseek, qwen3,
-        # kimi, etc. The old whitelist of llama3+neural-chat predates this.
+        # Ollama Cloud's /api/chat does not reliably honor structured-output
+        # schemas — `with_structured_output` hangs / times out under load. Local
+        # Ollama still does. For cloud, fall through to extract_json_from_response.
         if self.is_ollama():
-            return True
+            return not self.is_ollama_cloud()
         # OpenRouter models generally support JSON mode
         if self.provider == ModelProvider.OPENROUTER:
             return True
@@ -79,11 +79,18 @@ class LLMModel(BaseModel):
         return self.provider == ModelProvider.OLLAMA
 
     def is_ollama_cloud(self) -> bool:
-        """Check if this Ollama model targets Ollama Cloud (named with a -cloud / :cloud suffix)"""
+        """Whether this Ollama model is going to be served by Ollama Cloud.
+
+        True if either: the model name has a -cloud / :cloud suffix, OR the
+        environment has OLLAMA_API_KEY set (which makes get_model() route every
+        Ollama call to ollama.com regardless of name).
+        """
         if not self.is_ollama():
             return False
         name = self.model_name.lower()
-        return name.endswith("-cloud") or name.endswith(":cloud") or ":cloud-" in name
+        if name.endswith("-cloud") or name.endswith(":cloud") or ":cloud-" in name:
+            return True
+        return bool(os.environ.get("OLLAMA_API_KEY"))
 
 
 # Load models from JSON file
