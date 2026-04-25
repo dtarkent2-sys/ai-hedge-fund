@@ -22,13 +22,14 @@ from typing import List, Optional
 from dotenv import load_dotenv
 load_dotenv()
 
+import asyncio
 import json
 import traceback
 
 from dateutil.relativedelta import relativedelta
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from src.llm.models import OLLAMA_MODELS
@@ -495,6 +496,121 @@ init();
 </body>
 </html>
 """
+
+
+@app.post("/api/run-stream")
+async def api_run_stream(req: RunRequest, request: Request):
+    """Streaming variant of /api/run.
+
+    Pushes Server-Sent Events as each agent updates its status (the same
+    `progress.update_status(...)` calls that drive the terminal display in
+    interactive mode), then a final `complete` event with the full result
+    payload. The Next dashboard's reverse proxy passes through SSE verbatim
+    so the browser sees:
+
+      data: {"type":"agent_status","agent":"aswath_damodaran_agent","ticker":"AAPL","status":"Calculating intrinsic value (DCF)","timestamp":"2026-04-25T19:32:01Z"}
+      data: {"type":"agent_status","agent":"aswath_damodaran_agent","ticker":"AAPL","status":"Done","timestamp":"…"}
+      …
+      data: {"type":"complete","decisions":{...},"analyst_signals":{...},"window":{...},"model":"…"}
+    """
+    end = req.end_date or datetime.now().strftime("%Y-%m-%d")
+    if req.start_date:
+        start = req.start_date
+    else:
+        start = (datetime.strptime(end, "%Y-%m-%d") - relativedelta(months=3)).strftime("%Y-%m-%d")
+
+    portfolio = {
+        "cash": req.initial_cash,
+        "margin_requirement": req.margin_requirement,
+        "margin_used": 0.0,
+        "positions": {
+            t: {"long": 0, "short": 0, "long_cost_basis": 0.0,
+                "short_cost_basis": 0.0, "short_margin_used": 0.0}
+            for t in req.tickers
+        },
+        "realized_gains": {t: {"long": 0.0, "short": 0.0} for t in req.tickers},
+    }
+
+    async def event_generator():
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue[dict] = asyncio.Queue()
+
+        # Bridge: sync handler -> async queue. progress.update_status is called
+        # from worker threads inside LangGraph's fan-out, so we need a
+        # thread-safe push back into the asyncio loop.
+        def handler(agent_name, ticker, status, analysis, timestamp):
+            event = {
+                "type": "agent_status",
+                "agent": agent_name,
+                "ticker": ticker,
+                "status": status,
+                "timestamp": timestamp,
+            }
+            try:
+                loop.call_soon_threadsafe(queue.put_nowait, event)
+            except RuntimeError:
+                # Loop already closed; client likely disconnected
+                pass
+
+        progress.register_handler(handler)
+        try:
+            run_task = asyncio.create_task(asyncio.to_thread(
+                run_hedge_fund,
+                tickers=req.tickers, start_date=start, end_date=end,
+                portfolio=portfolio, show_reasoning=req.show_reasoning,
+                selected_analysts=req.analysts or [],
+                model_name=req.model, model_provider="Ollama",
+            ))
+
+            yield f"data: {json.dumps({'type': 'start', 'tickers': req.tickers, 'model': req.model, 'start_date': start, 'end_date': end})}\n\n"
+
+            # Pump status events while the workflow runs. Send a keepalive
+            # comment every ~10s of silence so CF tunnels don't idle-close.
+            while not run_task.done():
+                if await request.is_disconnected():
+                    run_task.cancel()
+                    return
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=8.0)
+                    yield f"data: {json.dumps(event)}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+
+            # Drain any remaining events queued after run_task finished
+            while not queue.empty():
+                event = queue.get_nowait()
+                yield f"data: {json.dumps(event)}\n\n"
+
+            # Final result
+            try:
+                result = run_task.result()
+            except Exception as exc:
+                yield f"data: {json.dumps({'type': 'error', 'error': f'{type(exc).__name__}: {exc}'})}\n\n"
+                return
+
+            payload = {
+                "type": "complete",
+                "decisions": result.get("decisions"),
+                "analyst_signals": result.get("analyst_signals"),
+                "window": {"start": start, "end": end},
+                "model": req.model,
+            }
+            try:
+                yield f"data: {json.dumps(jsonable_encoder(payload))}\n\n"
+            except Exception as exc:
+                yield f"data: {json.dumps({'type': 'error', 'error': f'serialization: {type(exc).__name__}: {exc}'})}\n\n"
+        finally:
+            progress.unregister_handler(handler)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",  # disable nginx-style proxy buffering
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @app.get("/", response_class=HTMLResponse)
