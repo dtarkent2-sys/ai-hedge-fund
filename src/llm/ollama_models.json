@@ -55,11 +55,6 @@
     "provider": "Ollama"
   },
   {
-    "display_name": "[cloud] Qwen3.5",
-    "model_name": "qwen3.5:cloud",
-    "provider": "Ollama"
-  },
-  {
     "display_name": "[cloud] Qwen3 Coder Next",
     "model_name": "qwen3-coder-next:cloud",
     "provider": "Ollama"
@@ -90,43 +85,13 @@
     "provider": "Ollama"
   },
   {
-    "display_name": "[cloud] Nemotron 3 Nano",
-    "model_name": "nemotron-3-nano:cloud",
-    "provider": "Ollama"
-  },
-  {
     "display_name": "[cloud] Mistral Large 3 675B",
     "model_name": "mistral-large-3:675b",
     "provider": "Ollama"
   },
   {
-    "display_name": "[cloud] Ministral 3",
-    "model_name": "ministral-3:cloud",
-    "provider": "Ollama"
-  },
-  {
-    "display_name": "[cloud] Devstral 2",
-    "model_name": "devstral-2:cloud",
-    "provider": "Ollama"
-  },
-  {
-    "display_name": "[cloud] Devstral Small 2",
-    "model_name": "devstral-small-2:cloud",
-    "provider": "Ollama"
-  },
-  {
-    "display_name": "[cloud] Gemma 4",
-    "model_name": "gemma4:cloud",
-    "provider": "Ollama"
-  },
-  {
     "display_name": "[cloud] Gemini 3 Flash (preview)",
     "model_name": "gemini-3-flash-preview:cloud",
-    "provider": "Ollama"
-  },
-  {
-    "display_name": "[cloud] Cogito 2.1",
-    "model_name": "cogito-2.1:cloud",
     "provider": "Ollama"
   },
   {

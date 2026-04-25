@@ -228,10 +228,20 @@ def get_model(model_name: str, model_provider: ModelProvider, api_keys: dict = N
                     "points at ollama.com)."
                 )
                 raise ValueError("Ollama Cloud requires OLLAMA_API_KEY to be set.")
+            # Bound every Ollama Cloud call so a 404 (bad slug) or model-side
+            # stall fails the agent within OLLAMA_REQUEST_TIMEOUT instead of
+            # hanging the whole graph (which manifested as "failed to fetch").
+            try:
+                timeout_s = float(os.getenv("OLLAMA_REQUEST_TIMEOUT", "120"))
+            except ValueError:
+                timeout_s = 120.0
             return ChatOllama(
                 model=model_name,
                 base_url=base_url,
-                client_kwargs={"headers": {"Authorization": f"Bearer {api_key}"}},
+                client_kwargs={
+                    "headers": {"Authorization": f"Bearer {api_key}"},
+                    "timeout": timeout_s,
+                },
             )
 
         # Local daemon
