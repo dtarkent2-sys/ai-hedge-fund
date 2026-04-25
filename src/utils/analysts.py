@@ -35,14 +35,7 @@ from src.agents.deterministic import (
 )
 from src.agents.personas import (
     kenneth_fisher_agent,
-    oshaughnessy_agent,
-    martin_zweig_agent,
-    joel_greenblatt_agent,
-    john_neff_agent,
-    david_dreman_agent,
     motley_fool_agent,
-    wesley_gray_agent,
-    meb_faber_agent,
 )
 
 # Define analyst configuration - single source of truth.
@@ -308,6 +301,11 @@ ANALYST_CONFIG = {
         "order": 110,
     },
     # ─── Heuristic LLM personas (Validea-style) ─────────────────────────────────
+    # Personas kept here are the ones whose qualitative judgment cannot be
+    # reduced to a single deterministic factor. Mechanical Validea screens
+    # (Greenblatt, O'Shaughnessy, Zweig, Neff, Dreman, Wesley Gray, Meb Faber)
+    # were removed because they duplicate existing deterministic agents
+    # (greenblatt, multi_factor, dividend_aristocrat, acquirers_multiple, etc.).
     "kenneth_fisher": {
         "display_name": "Kenneth Fisher",
         "description": "Super Stocks / P/S focus",
@@ -317,51 +315,6 @@ ANALYST_CONFIG = {
         "kind": "heuristic",
         "order": 200,
     },
-    "oshaughnessy": {
-        "display_name": "James O'Shaughnessy",
-        "description": "Trending Value composite",
-        "investing_style": "Six-factor value composite (PE, PB, PS, PCF, EV/EBITDA, shareholder yield) filtered by 6-month price strength.",
-        "agent_func": oshaughnessy_agent,
-        "type": "analyst",
-        "kind": "heuristic",
-        "order": 201,
-    },
-    "martin_zweig": {
-        "display_name": "Martin Zweig",
-        "description": "Growth + earnings persistence + reasonable PE",
-        "investing_style": "Zweig's checklist: 4+ years rising EPS, sales tracks earnings, accelerating growth, P/E ≤ market×1.4, modest debt.",
-        "agent_func": martin_zweig_agent,
-        "type": "analyst",
-        "kind": "heuristic",
-        "order": 202,
-    },
-    "joel_greenblatt_persona": {
-        "display_name": "Joel Greenblatt (persona)",
-        "description": "Magic Formula in narrative voice",
-        "investing_style": "Earnings yield (EBIT/EV) × Return on Capital. Cheap + good = buy.",
-        "agent_func": joel_greenblatt_agent,
-        "type": "analyst",
-        "kind": "heuristic",
-        "order": 203,
-    },
-    "john_neff": {
-        "display_name": "John Neff",
-        "description": "Total Return Ratio (low-PE contrarian)",
-        "investing_style": "TRR = (earnings growth + dividend yield) / P/E. ≥ 2× market reward = bullish.",
-        "agent_func": john_neff_agent,
-        "type": "analyst",
-        "kind": "heuristic",
-        "order": 204,
-    },
-    "david_dreman": {
-        "display_name": "David Dreman",
-        "description": "Deep contrarian value (cheapest 20%)",
-        "investing_style": "Bottom-quintile P/E + P/B + P/CF, above-average dividend yield, basic quality screen.",
-        "agent_func": david_dreman_agent,
-        "type": "analyst",
-        "kind": "heuristic",
-        "order": 205,
-    },
     "motley_fool": {
         "display_name": "Motley Fool",
         "description": "Foolish Small Cap growth",
@@ -370,24 +323,6 @@ ANALYST_CONFIG = {
         "type": "analyst",
         "kind": "heuristic",
         "order": 206,
-    },
-    "wesley_gray": {
-        "display_name": "Wesley Gray",
-        "description": "Quantitative Value (deep value + quality)",
-        "investing_style": "Cheapest decile by EV/EBIT with stable positive operating margins and manageable debt.",
-        "agent_func": wesley_gray_agent,
-        "type": "analyst",
-        "kind": "heuristic",
-        "order": 207,
-    },
-    "meb_faber": {
-        "display_name": "Meb Faber",
-        "description": "Shareholder Yield + trend filter",
-        "investing_style": "Dividend + buyback + debt-paydown yield. Bullish only when also above 200-day MA.",
-        "agent_func": meb_faber_agent,
-        "type": "analyst",
-        "kind": "heuristic",
-        "order": 208,
     },
 }
 
