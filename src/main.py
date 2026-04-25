@@ -63,12 +63,41 @@ def run_hedge_fund(
     selected_analysts: list[str] = [],
     model_name: str | None = None,
     model_provider: str | None = None,
+    analyst_model: str | None = None,
+    pm_model: str | None = None,
 ):
+    """Run the hedge-fund graph.
+
+    `model_name`/`model_provider` set the global default. `analyst_model` and
+    `pm_model` (Ollama only) override the model used by every analyst/persona
+    agent and by the portfolio manager respectively. They're plumbed through
+    via a tiny shim object on `metadata.request` that exposes the
+    `get_agent_model_config(agent_name)` interface that
+    `src/utils/llm.py:get_agent_model_config` already looks for.
+    """
     from src.utils.llm import _system_default_model
     if not model_name or not model_provider:
         default_name, default_provider = _system_default_model()
         model_name = model_name or default_name
         model_provider = model_provider or default_provider
+
+    request_shim = None
+    if analyst_model or pm_model:
+        class _PerAgentRequest:
+            def __init__(self, analyst_model, pm_model, fallback_model, fallback_provider):
+                self.analyst_model = analyst_model
+                self.pm_model = pm_model
+                self.fallback_model = fallback_model
+                self.fallback_provider = fallback_provider
+
+            def get_agent_model_config(self, agent_name):
+                if agent_name == "portfolio_manager" and self.pm_model:
+                    return self.pm_model, "Ollama"
+                if agent_name != "portfolio_manager" and self.analyst_model:
+                    return self.analyst_model, "Ollama"
+                return self.fallback_model, self.fallback_provider
+
+        request_shim = _PerAgentRequest(analyst_model, pm_model, model_name, model_provider)
 
     # Per-run reset: a transient AV throttle in a *previous* run shouldn't
     # lock a ticker out of news fetches for this run.
@@ -103,6 +132,7 @@ def run_hedge_fund(
                     "show_reasoning": show_reasoning,
                     "model_name": model_name,
                     "model_provider": model_provider,
+                    "request": request_shim,
                 },
             },
         )

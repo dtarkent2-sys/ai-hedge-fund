@@ -55,6 +55,11 @@
     "provider": "Ollama"
   },
   {
+    "display_name": "[cloud] Qwen3.5 397B",
+    "model_name": "qwen3.5:397b-cloud",
+    "provider": "Ollama"
+  },
+  {
     "display_name": "[cloud] Qwen3 Coder Next",
     "model_name": "qwen3-coder-next:cloud",
     "provider": "Ollama"
@@ -87,6 +92,11 @@
   {
     "display_name": "[cloud] Mistral Large 3 675B",
     "model_name": "mistral-large-3:675b",
+    "provider": "Ollama"
+  },
+  {
+    "display_name": "[cloud] Gemma 4 31B",
+    "model_name": "gemma4:31b-cloud",
     "provider": "Ollama"
   },
   {

@@ -48,6 +48,12 @@ app = FastAPI(title="AI Hedge Fund — Local Webview")
 class RunRequest(BaseModel):
     tickers: List[str]
     model: str = "gpt-oss:20b"
+    # Optional per-bucket overrides (Ollama only). When set they override
+    # `model` for every analyst/persona agent (analyst_model) or for the
+    # portfolio manager (pm_model). Risk management is pure-math and uses
+    # neither.
+    analyst_model: Optional[str] = None
+    pm_model: Optional[str] = None
     analysts: Optional[List[str]] = None
     initial_cash: float = 100000.0
     margin_requirement: float = 0.0
@@ -112,6 +118,8 @@ def api_run(req: RunRequest):
             selected_analysts=req.analysts or [],
             model_name=req.model,
             model_provider="Ollama",
+            analyst_model=req.analyst_model,
+            pm_model=req.pm_model,
         )
     except Exception as e:
         print("run_hedge_fund raised:", type(e).__name__, e, file=sys.stderr)
@@ -560,6 +568,7 @@ async def api_run_stream(req: RunRequest, request: Request):
                 portfolio=portfolio, show_reasoning=req.show_reasoning,
                 selected_analysts=req.analysts or [],
                 model_name=req.model, model_provider="Ollama",
+                analyst_model=req.analyst_model, pm_model=req.pm_model,
             ))
 
             yield f"data: {json.dumps({'type': 'start', 'tickers': req.tickers, 'model': req.model, 'start_date': start, 'end_date': end})}\n\n"
