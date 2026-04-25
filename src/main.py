@@ -65,6 +65,7 @@ def run_hedge_fund(
     model_provider: str | None = None,
     analyst_model: str | None = None,
     pm_model: str | None = None,
+    cancel_event=None,
 ):
     """Run the hedge-fund graph.
 
@@ -133,6 +134,7 @@ def run_hedge_fund(
                     "model_name": model_name,
                     "model_provider": model_provider,
                     "request": request_shim,
+                    "cancel_event": cancel_event,
                 },
             },
         )

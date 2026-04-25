@@ -10,6 +10,12 @@ from src.utils.progress import progress
 from src.graph.state import AgentState
 
 
+class RunCancelledError(Exception):
+    """Raised when an in-flight run is cancelled by the SSE generator after
+    the client disconnects. Distinct from generic LLM errors so the SSE
+    layer can surface a clean 'cancelled' event instead of 'error'."""
+
+
 def _system_default_model() -> tuple[str, str]:
     """Pick a sensible default when the caller gave us no model config.
 
@@ -81,9 +87,17 @@ def call_llm(
             method="json_mode",
         )
 
+    # If the run was cancelled (client disconnected), bail out before
+    # spending any more LLM tokens / Ollama Cloud quota on it.
+    cancel_event = (state or {}).get("metadata", {}).get("cancel_event") if state else None
+    if cancel_event is not None and cancel_event.is_set():
+        raise RunCancelledError(f"Run cancelled before {agent_name or 'LLM'} call")
+
     # Call the LLM with retries
     last_error: Exception | None = None
     for attempt in range(max_retries):
+        if cancel_event is not None and cancel_event.is_set():
+            raise RunCancelledError(f"Run cancelled mid-retry for {agent_name or 'LLM'}")
         try:
             # Call the LLM
             result = llm.invoke(prompt)

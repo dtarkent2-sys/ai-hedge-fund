@@ -24,6 +24,7 @@ load_dotenv()
 
 import asyncio
 import json
+import threading
 import traceback
 
 from dateutil.relativedelta import relativedelta
@@ -35,11 +36,22 @@ from pydantic import BaseModel
 from src.llm.models import OLLAMA_MODELS
 from src.main import run_hedge_fund
 from src.utils.analysts import ANALYST_CONFIG, ANALYST_ORDER
+from src.utils.llm import RunCancelledError
 from src.utils.progress import progress
 
 # Kill the Rich Live terminal display inside the web process — it is TTY-oriented,
 # fragile on Windows encodings, and redundant (the browser has its own ticker).
 progress.set_quiet(True)
+
+
+# Single-user webview: at most ONE run in flight at a time. A duplicate
+# /api/run-stream while another is active gets rejected with 409 instead
+# of stacking up extra LLM-call fan-outs that all compete for the same
+# Ollama Cloud concurrency budget. The active run's cancel_event lives
+# here too so a new request can interrupt the previous one if the user
+# explicitly opts in via ?force=1.
+_run_lock = threading.Lock()
+_active_cancel_event: Optional[threading.Event] = None
 
 
 app = FastAPI(title="AI Hedge Fund — Local Webview")
@@ -506,6 +518,21 @@ init();
 """
 
 
+@app.post("/api/cancel")
+async def api_cancel():
+    """Best-effort cancel for the run currently in flight (if any).
+
+    Sets the threading.Event flag the worker thread checks before each
+    LLM call, so any in-flight run terminates within the runtime of its
+    current LLM invoke (capped by OLLAMA_REQUEST_TIMEOUT).
+    """
+    global _active_cancel_event
+    if _active_cancel_event is not None:
+        _active_cancel_event.set()
+        return {"cancelled": True}
+    return {"cancelled": False, "reason": "no run in flight"}
+
+
 @app.post("/api/run-stream")
 async def api_run_stream(req: RunRequest, request: Request):
     """Streaming variant of /api/run.
@@ -539,6 +566,22 @@ async def api_run_stream(req: RunRequest, request: Request):
         "realized_gains": {t: {"long": 0.0, "short": 0.0} for t in req.tickers},
     }
 
+    # Single-run gate. If a run is already in flight, reject with a clear
+    # message instead of silently stacking another full fan-out on top of
+    # the first (which is what made everything feel "hung").
+    global _active_cancel_event
+    if not _run_lock.acquire(blocking=False):
+        return JSONResponse(
+            {
+                "error": "another run is already in flight",
+                "hint": "POST /api/cancel to abort it, or wait for it to finish",
+            },
+            status_code=409,
+        )
+
+    cancel_event = threading.Event()
+    _active_cancel_event = cancel_event
+
     async def event_generator():
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[dict] = asyncio.Queue()
@@ -569,6 +612,7 @@ async def api_run_stream(req: RunRequest, request: Request):
                 selected_analysts=req.analysts or [],
                 model_name=req.model, model_provider="Ollama",
                 analyst_model=req.analyst_model, pm_model=req.pm_model,
+                cancel_event=cancel_event,
             ))
 
             yield f"data: {json.dumps({'type': 'start', 'tickers': req.tickers, 'model': req.model, 'start_date': start, 'end_date': end})}\n\n"
@@ -577,8 +621,12 @@ async def api_run_stream(req: RunRequest, request: Request):
             # comment every ~10s of silence so CF tunnels don't idle-close.
             while not run_task.done():
                 if await request.is_disconnected():
+                    # Real cancel: set the flag the worker thread checks
+                    # before each LLM call. Then keep draining the queue so
+                    # later "Done" / "Cancelled" events still fire.
+                    cancel_event.set()
                     run_task.cancel()
-                    return
+                    break
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=8.0)
                     yield f"data: {json.dumps(event)}\n\n"
@@ -593,6 +641,9 @@ async def api_run_stream(req: RunRequest, request: Request):
             # Final result
             try:
                 result = run_task.result()
+            except (asyncio.CancelledError, RunCancelledError):
+                yield f"data: {json.dumps({'type': 'cancelled'})}\n\n"
+                return
             except Exception as exc:
                 yield f"data: {json.dumps({'type': 'error', 'error': f'{type(exc).__name__}: {exc}'})}\n\n"
                 return
@@ -610,6 +661,12 @@ async def api_run_stream(req: RunRequest, request: Request):
                 yield f"data: {json.dumps({'type': 'error', 'error': f'serialization: {type(exc).__name__}: {exc}'})}\n\n"
         finally:
             progress.unregister_handler(handler)
+            global _active_cancel_event
+            _active_cancel_event = None
+            try:
+                _run_lock.release()
+            except RuntimeError:
+                pass
 
     return StreamingResponse(
         event_generator(),
