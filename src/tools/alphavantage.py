@@ -1111,16 +1111,16 @@ def get_company_news(
         with _coalesce_lock(("NEWS_SENTIMENT", ticker)):
             feed = _NEWS_CACHE.get(ticker)
             if feed is None and ticker not in _NEWS_NEGATIVE_CACHE:
+                # Don't pass time_to/time_from — AV rejects end-of-day-today
+                # bounds with "Invalid inputs" and the broadest fetch is what
+                # we want anyway since per-agent callers filter the window
+                # in-memory below.
                 params = {
                     "function": "NEWS_SENTIMENT",
                     "tickers": ticker,
                     "limit": min(limit, 1000),
                     "apikey": _key(api_key),
                 }
-                # Use only end_date — we want the broadest cached feed; per-agent
-                # callers filter the window themselves below.
-                if end_date:
-                    params["time_to"] = end_date.replace("-", "") + "T2359"
                 data = _get(params)
                 feed = data.get("feed") or []
                 if feed:
