@@ -19,6 +19,7 @@ from src.agents.deterministic.mohanram import mohanram_agent
 from src.agents.deterministic.dividend_aristocrat import dividend_aristocrat_agent
 from src.agents.deterministic.etf_profile import etf_profile_agent
 from src.agents.deterministic.dashan_huang import dashan_huang_agent
+from src.agents.deterministic.cross_stock import cross_stock_agent
 
 __all__ = [
     "piotroski_agent",
@@ -32,4 +33,5 @@ __all__ = [
     "dividend_aristocrat_agent",
     "etf_profile_agent",
     "dashan_huang_agent",
+    "cross_stock_agent",
 ]

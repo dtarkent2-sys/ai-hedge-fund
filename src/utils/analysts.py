@@ -32,6 +32,7 @@ from src.agents.deterministic import (
     dividend_aristocrat_agent,
     etf_profile_agent,
     dashan_huang_agent,
+    cross_stock_agent,
 )
 from src.agents.personas import (
     kenneth_fisher_agent,
@@ -299,6 +300,15 @@ ANALYST_CONFIG = {
         "type": "analyst",
         "kind": "deterministic",
         "order": 110,
+    },
+    "cross_stock": {
+        "display_name": "Cross-Stock Concentration",
+        "description": "Penalize sector/industry overlap within the run",
+        "investing_style": "Huang et al. (2026, adapted): builds a sector/industry/market-cap candidate graph across every ticker in the request and counts each ticker's neighbors. 0-1 neighbors → diversifying (bullish); 3+ → concentration risk (bearish). Stops the PM from doubling down on a single cluster (e.g. NVDA+AMD+INTC).",
+        "agent_func": cross_stock_agent,
+        "type": "analyst",
+        "kind": "deterministic",
+        "order": 111,
     },
     # ─── Heuristic LLM personas (Validea-style) ─────────────────────────────────
     # Personas kept here are the ones whose qualitative judgment cannot be
