@@ -38,10 +38,12 @@ alembic = "^1.12.0"
 langchain-gigachat = "^0.3.12"
 langchain-xai = "^0.2.5"
 scipy = "^1.11.0"
-# Hermes' research library — pure-stdlib paper implementations.
-# cross_stock used by cross_stock_agent. lasso_screening / agent_attribution
-# / gex_obfuscation are imported on demand from other call sites.
+# Hermes' research libraries — pure-stdlib paper implementations.
+#   sharkquant-research → cross_stock used by risk_manager's cluster mult.
+#   hermes-research     → ORCA used by risk_manager's concentration mult,
+#                         WassersteinHMM consumed elsewhere if needed.
 sharkquant-research = { path = "../sharkquant-research", develop = true }
+hermes-research = { path = "../hermes-research", develop = true }
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.0"

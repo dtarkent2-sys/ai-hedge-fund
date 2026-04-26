@@ -10,6 +10,10 @@ from src.utils.cross_stock_clusters import (
     compute_cluster_counts,
     calculate_cluster_multiplier,
 )
+from src.utils.spectral_risk import (
+    compute_ar1_from_correlation,
+    calculate_concentration_multiplier,
+)
 
 ##### Risk Management Agent #####
 def risk_management_agent(state: AgentState, agent_id: str = "risk_management_agent"):
@@ -87,6 +91,12 @@ def risk_management_agent(state: AgentState, agent_id: str = "risk_management_ag
                 correlation_matrix = returns_df.corr()
         except Exception:
             correlation_matrix = None
+
+    # ORCA AR₁ off the same correlation matrix — the share of variance
+    # explained by the first principal component. High AR₁ → everything
+    # moving together → shrink position caps across the board.
+    market_ar1 = compute_ar1_from_correlation(correlation_matrix)
+    concentration_multiplier = calculate_concentration_multiplier(market_ar1)
 
     # Determine which tickers currently have exposure (non-zero absolute position)
     active_positions = {
@@ -181,8 +191,16 @@ def risk_management_agent(state: AgentState, agent_id: str = "risk_management_ag
         n_cluster = cluster_counts.get(ticker.upper(), 0)
         cluster_multiplier = calculate_cluster_multiplier(n_cluster)
 
-        # Combine volatility, correlation, and cluster adjustments
-        combined_limit_pct = vol_adjusted_limit_pct * corr_multiplier * cluster_multiplier
+        # Combine volatility, correlation, cluster, and ORCA-AR₁
+        # market-concentration adjustments. concentration_multiplier is
+        # a single number across the run (basket-level), so every ticker
+        # in the same request gets the same haircut.
+        combined_limit_pct = (
+            vol_adjusted_limit_pct
+            * corr_multiplier
+            * cluster_multiplier
+            * concentration_multiplier
+        )
         # Convert to dollar position limit
         position_limit = total_portfolio_value * combined_limit_pct
         
@@ -206,20 +224,28 @@ def risk_management_agent(state: AgentState, agent_id: str = "risk_management_ag
                 "neighbors_in_run": n_cluster,
                 "cluster_multiplier": float(cluster_multiplier),
             },
+            "concentration_metrics": {
+                "ar1": float(market_ar1) if market_ar1 is not None else None,
+                "concentration_multiplier": float(concentration_multiplier),
+            },
             "reasoning": {
                 "portfolio_value": float(total_portfolio_value),
                 "current_position_value": float(current_position_value),
                 "base_position_limit_pct": float(vol_adjusted_limit_pct),
                 "correlation_multiplier": float(corr_multiplier),
                 "cluster_multiplier": float(cluster_multiplier),
+                "concentration_multiplier": float(concentration_multiplier),
+                "ar1": float(market_ar1) if market_ar1 is not None else None,
                 "combined_position_limit_pct": float(combined_limit_pct),
                 "position_limit": float(position_limit),
                 "remaining_limit": float(remaining_position_limit),
                 "available_cash": float(portfolio.get("cash", 0)),
                 "risk_adjustment": (
-                    f"Vol×Corr×Cluster adjusted: {combined_limit_pct:.1%} "
+                    f"Vol×Corr×Cluster×Concentration adjusted: {combined_limit_pct:.1%} "
                     f"(base {vol_adjusted_limit_pct:.1%}, "
-                    f"cluster_mult={cluster_multiplier:.2f}, n_cluster={n_cluster})"
+                    f"cluster_mult={cluster_multiplier:.2f} n_cluster={n_cluster}, "
+                    f"conc_mult={concentration_multiplier:.2f} "
+                    f"ar1={'n/a' if market_ar1 is None else f'{market_ar1:.2f}'})"
                 ),
             },
         }
