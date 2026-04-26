@@ -6,6 +6,10 @@ import json
 import numpy as np
 import pandas as pd
 from src.utils.api_key import get_api_key_from_state
+from src.utils.cross_stock_clusters import (
+    compute_cluster_counts,
+    calculate_cluster_multiplier,
+)
 
 ##### Risk Management Agent #####
 def risk_management_agent(state: AgentState, agent_id: str = "risk_management_agent"):
@@ -102,6 +106,18 @@ def risk_management_agent(state: AgentState, agent_id: str = "risk_management_ag
     
     progress.update_status(agent_id, None, f"Total portfolio value: {total_portfolio_value:.2f}")
 
+    # Compute cross-stock cluster counts for the run. Each ticker gets a
+    # count of how many other tickers in this request share its sector +
+    # industry. The cap multiplier shrinks position size when the ticker
+    # is part of a tight cluster — keeps the PM from going 4×25% on a
+    # single sector just because every analyst is bullish on the basket.
+    progress.update_status(agent_id, None, "Computing cross-stock cluster counts")
+    try:
+        cluster_counts = compute_cluster_counts(tickers, api_key=get_api_key_from_state(state, "ALPHA_VANTAGE_API_KEY"))
+    except Exception as exc:
+        cluster_counts = {t.upper(): 0 for t in tickers}
+        progress.update_status(agent_id, None, f"Cluster computation failed: {type(exc).__name__}")
+
     # Calculate volatility- and correlation-adjusted risk limits for each ticker
     for ticker in tickers:
         progress.update_status(agent_id, ticker, "Calculating volatility- and correlation-adjusted limits")
@@ -160,8 +176,13 @@ def risk_management_agent(state: AgentState, agent_id: str = "risk_management_ag
                     ]
                     corr_multiplier = calculate_correlation_multiplier(avg_corr)
         
-        # Combine volatility and correlation adjustments
-        combined_limit_pct = vol_adjusted_limit_pct * corr_multiplier
+        # Cluster (cross-stock) adjustment — shrinks the cap when this
+        # ticker shares sector+industry with other names in the run.
+        n_cluster = cluster_counts.get(ticker.upper(), 0)
+        cluster_multiplier = calculate_cluster_multiplier(n_cluster)
+
+        # Combine volatility, correlation, and cluster adjustments
+        combined_limit_pct = vol_adjusted_limit_pct * corr_multiplier * cluster_multiplier
         # Convert to dollar position limit
         position_limit = total_portfolio_value * combined_limit_pct
         
@@ -181,16 +202,25 @@ def risk_management_agent(state: AgentState, agent_id: str = "risk_management_ag
                 "data_points": int(vol_data.get("data_points", 0))
             },
             "correlation_metrics": corr_metrics,
+            "cluster_metrics": {
+                "neighbors_in_run": n_cluster,
+                "cluster_multiplier": float(cluster_multiplier),
+            },
             "reasoning": {
                 "portfolio_value": float(total_portfolio_value),
                 "current_position_value": float(current_position_value),
                 "base_position_limit_pct": float(vol_adjusted_limit_pct),
                 "correlation_multiplier": float(corr_multiplier),
+                "cluster_multiplier": float(cluster_multiplier),
                 "combined_position_limit_pct": float(combined_limit_pct),
                 "position_limit": float(position_limit),
                 "remaining_limit": float(remaining_position_limit),
                 "available_cash": float(portfolio.get("cash", 0)),
-                "risk_adjustment": f"Volatility x Correlation adjusted: {combined_limit_pct:.1%} (base {vol_adjusted_limit_pct:.1%})"
+                "risk_adjustment": (
+                    f"Vol×Corr×Cluster adjusted: {combined_limit_pct:.1%} "
+                    f"(base {vol_adjusted_limit_pct:.1%}, "
+                    f"cluster_mult={cluster_multiplier:.2f}, n_cluster={n_cluster})"
+                ),
             },
         }
         
